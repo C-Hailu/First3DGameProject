@@ -4,7 +4,6 @@ enum States {attack, idle, chase, die, spell}
 
 var state = States.idle
 var hp = 20
-var speed = 4
 var accel = 10
 var damage = 10
 var gravity = 9.8
@@ -12,6 +11,16 @@ var target = null
 var value = 15
 var can_spell = true
 var is_casting = false
+
+
+# Patrol variables
+var patrol_timer = 0.0
+@export var patrol_duration: float = 3.0  # How long to walk before stopping
+@export var walk_speed: float = 2.0  # Slower walking speed
+@export var speed: float = 4.0  # Chase/run speed
+@export var spell_cooldown: float = 5.0  # Cooldown between spells
+var is_patrolling = false
+var patrol_target = Vector3.ZERO
 
 @export var navAgent : NavigationAgent3D
 @export var animationPlayer: AnimationPlayer
@@ -33,8 +42,28 @@ func _physics_process(delta):
 		velocity.y -= gravity
 	
 	if state == States.idle:
-		velocity = Vector3(0, velocity.y, 0)
-		animationPlayer.play("look")
+		if is_patrolling:
+			# Continue patrolling
+			patrol_timer -= delta
+			look_at(Vector3(patrol_target.x, global_position.y, patrol_target.z), Vector3.UP, true)
+			navAgent.target_position = patrol_target
+			var direction = navAgent.get_next_path_position() - global_position
+			direction = direction.normalized()
+			velocity = velocity.lerp(direction * walk_speed, accel * delta)
+			animationPlayer.play("walk")
+			
+			# Stop patrolling after duration
+			if patrol_timer <= 0:
+				is_patrolling = false
+		else:
+			# Idle/looking - standing still
+			velocity = Vector3(0, velocity.y, 0)
+			animationPlayer.play("look")
+			
+			# Start new patrol after a delay
+			patrol_timer = randf_range(2.0, 4.0)  # Wait 2-4 seconds before next patrol
+			if randf() > 0.3:  # 70% chance to patrol
+				start_patrol()
 	elif state == States.chase:
 		look_at(Vector3(target.global_position.x, global_position.y, target.global_position.z), Vector3.UP, true)
 		navAgent.target_position = target.global_position
@@ -50,7 +79,12 @@ func _physics_process(delta):
 	elif state == States.spell:
 		look_at(Vector3(target.global_position.x, global_position.y, target.global_position.z), Vector3.UP, true)
 		velocity = Vector3.ZERO
-		animationPlayer.play("spell1")
+		# Only play animation if we can actually cast
+		if can_spell:
+			animationPlayer.play("spell1")
+		else:
+			# If on cooldown, return to chase state
+			state = States.chase
 	elif state == States.die:
 		velocity = Vector3.ZERO
 		animationPlayer.play("die1")
@@ -61,6 +95,19 @@ func _physics_process(delta):
 func attack():
 	if target:
 		target.hp -= damage
+
+
+func start_patrol():
+	"""Generate a random patrol point and start walking"""
+	is_patrolling = true
+	patrol_timer = patrol_duration
+	
+	# Generate random position within reasonable distance
+	var random_offset = Vector3(randf_range(-15, 15), 0, randf_range(-15, 15))
+	patrol_target = global_position + random_offset
+	
+	# Clamp to prevent going too far
+	patrol_target.y = global_position.y
 
 
 func cast_spell():
@@ -104,7 +151,8 @@ func cast_spell():
 	if is_instance_valid(fireball):
 		fireball.queue_free()
 	
-
+	# Start cooldown before allowing next spell
+	await get_tree().create_timer(spell_cooldown).timeout
 	can_spell = true
 	is_casting = false
 
@@ -129,12 +177,23 @@ func _on_chase_area_body_entered(body: Node3D) -> void:
 	if body.has_method("player") and state != States.die:
 		target = body
 		state = States.chase
+		# Trigger combat music - search entire tree
+		var music_manager = get_tree().root.find_child("MusicManager", true, false)
+		if music_manager:
+			print("Starting combat music...")
+			music_manager.start_combat()
+		else:
+			print("ERROR: MusicManager not found in scene!")
 
 
 func _on_chase_area_body_exited(body: Node3D) -> void:
 	if body.has_method("player") and state != States.die:
 		target = null
 		state = States.idle
+		# Stop combat music - search entire tree
+		var music_manager = get_tree().root.find_child("MusicManager", true, false)
+		if music_manager:
+			music_manager.stop_combat()
 
 
 func _on_attack_area_body_entered(body: Node3D) -> void:
@@ -147,15 +206,12 @@ func _on_attack_area_body_exited(body: Node3D) -> void:
 		state = States.chase
 
 
-
-
-
 func _on_spell_area_body_entered(body: Node3D) -> void:
-	if body.has_method("player") and state != States.die:
+	# Only enter spell state if spell is off cooldown
+	if body.has_method("player") and state != States.die and can_spell:
 		state = States.spell
 
 
 func _on_spell_area_body_exited(body: Node3D) -> void:
 	if body.has_method("player") and state != States.die:
-		state = States.idle
-	
+		state = States.chase  # Changed from idle to chase so enemy keeps pursuing
