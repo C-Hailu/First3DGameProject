@@ -11,6 +11,7 @@ var target = null
 var value = 15
 var can_spell = true
 var is_casting = false
+var can_attack = true  # Add attack cooldown flag
 
 
 # Patrol variables
@@ -26,10 +27,23 @@ var patrol_target = Vector3.ZERO
 @export var animationPlayer: AnimationPlayer
 @export var fireball_scene: PackedScene  # Assign your fireball scene here
 @export var fireball_spawn_point: Node3D  # Assign the Marker3D node here
+@export var punch_sound: AudioStream  # Sound for punch attack
+@export var spell_hit_sound: AudioStream  # Sound for spell hit
+@export var punch_volume: float = 0.0  # Volume in dB (0 = normal, -10 = quieter, 10 = louder)
+@export var spell_volume: float = 0.0  # Volume in dB (0 = normal, -10 = quieter, 10 = louder)
+
+@onready var audio_player = AudioStreamPlayer3D.new()  # 3D positional audio
 
 
 
 func enemy(): pass
+
+
+func _ready():
+	# Setup audio player
+	add_child(audio_player)
+	audio_player.max_distance = 50.0  # How far sound can be heard
+	audio_player.unit_size = 10.0  # Size of sound source
 
 
 func _process(delta):
@@ -40,6 +54,14 @@ func _process(delta):
 func _physics_process(delta):
 	if not is_on_floor():
 		velocity.y -= gravity
+	
+	# Handle death music transition (only once when entering die state)
+	if state == States.die and hp <= 0:
+		var music_manager = get_tree().root.find_child("MusicManager", true, false)
+		if music_manager and not music_manager.active_enemies.has(self):
+			pass  # Already removed
+		elif music_manager:
+			music_manager.enemy_died(self)
 	
 	if state == States.idle:
 		if is_patrolling:
@@ -74,8 +96,9 @@ func _physics_process(delta):
 	elif state == States.attack:
 		look_at(Vector3(target.global_position.x, global_position.y, target.global_position.z), Vector3.UP, true)
 		velocity = Vector3.ZERO
-		animationPlayer.play("punch")
-		attack()
+		if can_attack:
+			animationPlayer.play("punch")
+			attack()
 	elif state == States.spell:
 		look_at(Vector3(target.global_position.x, global_position.y, target.global_position.z), Vector3.UP, true)
 		velocity = Vector3.ZERO
@@ -88,13 +111,30 @@ func _physics_process(delta):
 	elif state == States.die:
 		velocity = Vector3.ZERO
 		animationPlayer.play("die1")
+		# Notify music manager that this enemy died
+		var music_manager = get_tree().root.find_child("MusicManager", true, false)
+		if music_manager:
+			music_manager.enemy_died(self)
 	
 	move_and_slide()
 
 
 func attack():
-	if target:
+	if target and can_attack:
+		can_attack = false
 		target.hp -= damage
+		# Sound is now played by animation at exact frame
+		# Wait for attack animation to finish before attacking again
+		await get_tree().create_timer(1.0).timeout  # Adjust time based on your animation length
+		can_attack = true
+
+
+func play_punch_sound():
+	"""Called by AnimationPlayer at exact punch frame via CallMethod track"""
+	if punch_sound:
+		audio_player.stream = punch_sound
+		audio_player.volume_db = punch_volume
+		audio_player.play()
 
 
 func start_patrol():
@@ -159,10 +199,18 @@ func cast_spell():
 
 func _on_fireball_hit(body: Node3D, fireball: Node3D):
 	if body.has_method("player") and is_instance_valid(fireball):
+		print("Fireball hit player!")
+		# Play spell hit sound
+		if spell_hit_sound:
+			audio_player.stream = spell_hit_sound
+			audio_player.volume_db = spell_volume
+			audio_player.play()
 		# Call the player's take_damage method which handles VFX
 		if body.has_method("take_damage_with_vfx"):
+			print("Calling take_damage_with_vfx with damage: ", damage)
 			body.take_damage_with_vfx(damage, fireball.global_position)
 		else:
+			print("Player doesn't have take_damage_with_vfx, using direct HP")
 			body.hp -= damage
 		print("Fireball hit player! Damage: ", damage)
 		fireball.queue_free()
@@ -181,7 +229,7 @@ func _on_chase_area_body_entered(body: Node3D) -> void:
 		var music_manager = get_tree().root.find_child("MusicManager", true, false)
 		if music_manager:
 			print("Starting combat music...")
-			music_manager.start_combat()
+			music_manager.start_combat(self)  # Pass this enemy
 		else:
 			print("ERROR: MusicManager not found in scene!")
 
@@ -193,7 +241,7 @@ func _on_chase_area_body_exited(body: Node3D) -> void:
 		# Stop combat music - search entire tree
 		var music_manager = get_tree().root.find_child("MusicManager", true, false)
 		if music_manager:
-			music_manager.stop_combat()
+			music_manager.stop_combat(self)  # Pass this enemy
 
 
 func _on_attack_area_body_entered(body: Node3D) -> void:
