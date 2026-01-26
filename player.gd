@@ -27,9 +27,14 @@ var onCooldown = false
 
 
 func _ready():
-	hpBar.max_value = 50
+	hpBar.max_value = maxHP
+	hpBar.min_value = 0
+	hpBar.value = hp
+	
+	
 	
 func update_HUD():
+	
 	hpBar.value = hp
 	goldLabel.text = str(gold)
 
@@ -117,7 +122,9 @@ func _on_attack_cooldown_timeout() -> void:
 
 
 func take_damage_with_vfx(damage: int, impact_position: Vector3) -> void:
+	print("Player taking damage: ", damage, " | HP before: ", hp)
 	hp -= damage
+	print("HP after: ", hp)
 	
 	# Spawn hit VFX at designated point on body, or at impact location if not set
 	if hit_vfx:
