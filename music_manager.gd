@@ -26,31 +26,48 @@ func _process(delta):
 		combat_cooldown -= delta
 
 func start_combat(enemy = null):
+	# Stop ALL audio in the scene tree
+	for node in get_tree().get_nodes_in_group("music"):
+		if node != self and node is AudioStreamPlayer:
+			node.stop()
 	"""Called when enemy engages player"""
+	print("=== START_COMBAT CALLED ===")
+	print("Current playing status: ", playing)
+	print("Current stream: ", stream)
+	print("Is in combat: ", is_in_combat)
+	print("Is transitioning: ", is_transitioning)
+	
 	# Add enemy to active list if provided
 	if enemy and not active_enemies.has(enemy):
 		active_enemies.append(enemy)
+		print("Added enemy to list. Total enemies: ", active_enemies.size())
 	
 	# Only transition if not already in combat
 	if is_in_combat or is_transitioning:
+		print("Already in combat or transitioning, aborting")
 		return
 	
+	print("Starting combat music transition...")
 	is_in_combat = true
 	is_transitioning = true
 	
+	print("Fading out current music...")
 	# Fade out current music
 	var tween = create_tween()
 	tween.set_trans(Tween.TRANS_LINEAR)
 	tween.tween_property(self, "volume_db", -80, fade_duration)
 	await tween.finished
 	
+	print("Stopping current stream...")
 	# Stop the current stream before changing
 	stop()
+	print("Stream stopped. Playing status: ", playing)
 	
 	# Small delay to ensure stop completes
 	await get_tree().create_timer(0.1).timeout
 	
 	# Change music and set volume low
+	print("Setting combat music stream...")
 	stream = combat_music
 	if not combat_music:
 		print("ERROR: Combat music is null!")
@@ -59,32 +76,44 @@ func start_combat(enemy = null):
 		return
 	
 	volume_db = -80
+	print("Starting combat music...")
 	play()
+	print("Play called. Playing status: ", playing)
 	
 	# Fade in combat music
+	print("Fading in combat music...")
 	var tween2 = create_tween()
 	tween2.set_trans(Tween.TRANS_LINEAR)
 	tween2.tween_property(self, "volume_db", music_volume, fade_duration)
 	await tween2.finished
+	print("Combat music playing at volume: ", volume_db)
 	is_transitioning = false
+	print("=== COMBAT TRANSITION COMPLETE ===")
 
 func stop_combat(enemy = null):
 	"""Called when enemy loses sight of player or dies"""
+	print("=== STOP_COMBAT CALLED ===")
+	
 	# Remove enemy from active list if provided
 	if enemy and active_enemies.has(enemy):
 		active_enemies.erase(enemy)
+		print("Removed enemy. Remaining enemies: ", active_enemies.size())
 	
 	# Only stop combat music if no enemies remain
 	if active_enemies.size() > 0:
+		print("Still enemies active, keeping combat music")
 		return
 	
 	# Prevent rapid toggling
 	if combat_cooldown > 0:
+		print("Combat on cooldown, ignoring stop request")
 		return
 	
 	if not is_in_combat or is_transitioning:
+		print("Not in combat or already transitioning")
 		return
 	
+	print("Stopping combat, returning to scene music...")
 	is_in_combat = false
 	is_transitioning = true
 	combat_cooldown = 2.0  # 2 second cooldown before combat can start again
@@ -108,6 +137,7 @@ func stop_combat(enemy = null):
 	tween2.set_trans(Tween.TRANS_LINEAR)
 	tween2.tween_property(self, "volume_db", music_volume, fade_duration)
 	await tween2.finished
+	print("Scene music resumed")
 	is_transitioning = false
 
 func enemy_died(enemy):
@@ -170,6 +200,7 @@ func transition_to_music(new_music: AudioStream):
 	if is_transitioning:
 		return
 	
+	print("Transitioning to new music...")
 	is_transitioning = true
 	
 	# Fade out current music
@@ -192,4 +223,5 @@ func transition_to_music(new_music: AudioStream):
 	tween2.tween_property(self, "volume_db", music_volume, fade_duration)
 	await tween2.finished
 	
+	print("Music transition complete")
 	is_transitioning = false
